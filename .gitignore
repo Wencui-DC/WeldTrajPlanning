@@ -1,0 +1,19 @@
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 调试输出
+.debug/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# 虚拟环境
+.venv/
+venv/
+env/
