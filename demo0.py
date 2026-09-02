@@ -16,15 +16,15 @@ wavePara.len = 5
 wavePara.ampLeft = 5
 wavePara.ampRight = 5
 wavePara.tiltAngle = 0
-wavePara.dwell_left = 0.
-wavePara.dwell_mid = 0.65
-wavePara.dwell_right = 0.
-wavePara.dwell_end = 0.65
+wavePara.dwell_left = 0.1
+wavePara.dwell_mid = 0.
+wavePara.dwell_right = 0.1
+wavePara.dwell_end = 0.
 wavePara.isMovingWhenDwell = False
 
-numWave = 100.5
+numWave = 10.
 sine = Sine(wavePara, numWave)
-sine.printPath()
+# sine.printPath()
 
 
 # cornerInfo = sine.findCorners()

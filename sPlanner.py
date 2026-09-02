@@ -150,7 +150,7 @@ class sPlanner:
 
     def _plan_multiple_path(self, path, vMax, aMax, jMax):
         """Plan the complete sequence of segments supplied by WaveBase."""
-        self._itpMode = "segments"   # dwell 多段：插补走时间窗门限口径
+        self._itpMode = "multiple"   # dwell 多段：插补走时间窗门限口径
         self.veloPlans = []
         self.path_T_cum = np.array([])
         self.path_S_cum = np.array([])
@@ -159,9 +159,7 @@ class sPlanner:
         self.path_T_cum = np.cumsum([segment_plan.T for segment_plan in self.veloPlans])
         self.path_S_cum = np.concatenate((
             [0.0],
-            np.cumsum([
-                segment_plan.arcLen for segment_plan in self.veloPlans
-            ])
+            np.cumsum([segment_plan.arcLen for segment_plan in self.veloPlans])
         ))
 
         self.T = float(self.path_T_cum[-1])
@@ -172,18 +170,6 @@ class sPlanner:
         self.j_used = max((sp.j_used for sp in self.veloPlans), default=0.0)
 
     def _plan_segments(self, segments, vMax, aMax, jMax):
-        """Append plans for the supplied consecutive path segments.
-
-        周期波形展开后会重复出现大量"弧长与时长完全相同"的段，逐段调用
-        planFixedTime（内部 80 次二分）纯属重复计算。这里按
-        (弧长, 时长) 去重：每种段只规划一次，重复段复用同一个 sPlanner
-        实例（缓存见 self.planCache）。
-
-        段规划对象在插补阶段只被 at_time() 只读查询——插补状态
-        （uLast/sLast/arcStep、LUT、CU）由外层 planner 持有，段对象不保存
-        逐帧状态，因此共享是安全的。veloPlans 仍与 segments 一一对应，
-        path_T_cum / path_S_cum 与段索引（_segmentAt 等）逻辑不受影响。
-        """
         cache = self.planCache
         for segment in segments:
             arc_length = float(segment.arc_length)
@@ -473,7 +459,7 @@ class sPlanner:
             raise ValueError(
                 "缺少路径求值函数 CU：无法输出位置点，请传入带 CU 的波形对象")
 
-        if self._itpMode == "segments":
+        if self._itpMode == "multiple":
             # —— 多段：按 t 定位段 → 该段规划 → 段内 u∈[0,1] 单段插补 ——
             return self._interpSegments(wave, t)
         else:
@@ -491,7 +477,9 @@ class sPlanner:
         2) 速度取该段自己的规划 veloPlans[idx].at_time(t_local)
            （t_local = t - 段起始时刻，段内时间轴从 0 开始）；
         3) 调用单段插补接口 _stepSegment：弦长推进 + 弦长迭代，
-           s↔u 映射用该段的局部 LUT，u 的取值恒为段局部 [0, 1]；
+           s↔u 映射用该段的局部 LUT；u 通常恒为段局部 [0, 1]，
+           移动段（arcLen>0）段末允许 u 略超 1.0（沿段末切线外推，
+           见 allow_overshoot），停顿段保持原地；
         4) 跨段（idx 变化）时 uLast 重置为 0 —— 每段都从自己的 0 开始，
            不沿用上一段的参数；
         5) 输出位置：段局部 u → 全局 u = start_u + u_local·(end_u-start_u)。
@@ -526,53 +514,125 @@ class sPlanner:
             self.sLast = float(self.path_S_cum[idx])
             return np.asarray(self.CU(float(seg.start_u)))
 
+        # 段末 u 过冲（实验）：每个移动段（arcLen>0，即"对于 arcLen≠0 的
+        # 插补"）段末都放开——减速段末尾的推进残差不再被钳死在 u=1.0，
+        # 而是沿段末切线平滑外推（像 single 模式老算法一样），让移动段
+        # 的几何弧长与规划时间同步耗尽，避免"停不到拐点、停顿开始时才
+        # 跳上拐点"。停顿段（arcLen=0）本身不推进，始终原地停在拐点。
+        # 观察点：若某移动段外推残差较大，其后的停顿段起点会停在拐点，
+        # 即段界出现一次由外推量决定的小回跳。
+        allow_overshoot = float(seg.arc_length) > 1e-12
+
         if self.dt <= 1e-12:
             u_local = float(self.uLast)
         else:
             u_local = self._stepSegment(
                 seg, segLUT, self.veloPlans[idx],
-                t_now - seg_start_t, self.dt, float(self.uLast))
+                t_now - seg_start_t, self.dt, float(self.uLast),
+                allow_overshoot=allow_overshoot)
 
         self.uLast = u_local
-        s_local = float(np.interp(u_local, segLUT[0], segLUT[1]))
+        s_local = self._segS(segLUT, u_local)   # 含末端外推（u 过冲帧用）
         s_global = float(self.path_S_cum[idx]) + s_local
         self.arcStep = max(0.0, s_global - self.sLast)
         self.sLast = s_global
 
-        return self._segCU(seg, u_local)
+        return self._segCU_os(seg, segLUT, u_local)
 
-    def _stepSegment(self, seg, segLUT, plan, t_local, dt, u_start):
+    def _stepSegment(self, seg, segLUT, plan, t_local, dt, u_start,
+                     allow_overshoot=False):
         """单段插补接口（段局部 u∈[0,1]，与 _stepSinglePath 同一推进口径）。
 
         vt = 该段规划在段内时刻 t_local 的速度，ds = vt·dt 累加，
         再做弦长迭代（20 次 / tol=1e-6）修正到弦速 = vt。
-        与 _stepSinglePath 的差别只在 s↔u 映射：这里用段局部 LUT
-        （u 恒在 [0,1]，不过冲、不跨段），速度查询走段自身的规划。
+        与 _stepSinglePath 的差别只在 s↔u 映射：这里用段局部 LUT。
+
+        allow_overshoot=False（默认）：u 恒钳在段局部 [0,1]，不过冲、不跨段，
+        速度查询走段自身的规划。
+        allow_overshoot=True（移动段，arcLen>0）：u 允许略超 1.0——
+        s↔u 按段 LUT 末端斜率线性外推，位置沿段末切线外推（与
+        _stepSinglePath/_CU_ext 的 single 过冲口径一致）。
         """
         vt = float(plan.v_at(t_local))
         if vt <= 0.0:
             return u_start
 
-        us_l, ss = segLUT
-        s_current = float(np.interp(u_start, us_l, ss))
+        s_current = self._segS(segLUT, u_start)
         ds = vt * dt
-        u_next = float(np.interp(s_current + ds, ss, us_l))
+        u_next = self._segU(segLUT, s_current + ds, allow_overshoot)
         for _ in range(20):
             chord_len = np.linalg.norm(
-                self._segCU(seg, u_next) - self._segCU(seg, u_start))
+                self._segCU_os(seg, segLUT, u_next)
+                - self._segCU_os(seg, segLUT, u_start))
             v_chord = chord_len / dt
             if abs(v_chord - vt) <= 1e-6:
                 break
             ds *= vt / max(v_chord, 1e-12)    # 比例修正：弦速偏小则加大 ds
-            u_next = float(np.interp(s_current + ds, ss, us_l))
+            u_next = self._segU(segLUT, s_current + ds, allow_overshoot)
 
-        return float(min(max(u_next, u_start), 1.0))
+        u_next = max(float(u_next), float(u_start))   # 前进方向单调
+        if not allow_overshoot:
+            u_next = min(u_next, 1.0)
+        return u_next
+
+    @staticmethod
+    def _segS(segLUT, u_local):
+        """段局部 u → 段内累计弧长（折线 LUT 查询）。
+
+        u 越过段 LUT 末端时按末端斜率线性外推（u 过冲帧用；
+        u≤1 时与 np.interp 原口径完全一致）。
+        """
+        us_l, ss = segLUT
+        u_local = float(u_local)
+        u_end = float(us_l[-1])
+        if u_local <= u_end:
+            return float(np.interp(u_local, us_l, ss))
+        du = float(us_l[-1] - us_l[-2])
+        ds = float(ss[-1] - ss[-2])
+        return float(ss[-1]) + (u_local - u_end) * (ds / max(du, 1e-16))
+
+    @staticmethod
+    def _segU(segLUT, s_local, allow_overshoot=False):
+        """段内累计弧长 → 段局部 u（折线 LUT 反查）。
+
+        s 越过段 LUT 末端时按末端斜率线性外推 → u 可略超 1.0；
+        allow_overshoot=False 时钳回 1.0。
+        """
+        us_l, ss = segLUT
+        s_local = float(s_local)
+        s_end = float(ss[-1])
+        if s_local <= s_end:
+            u = float(np.interp(s_local, ss, us_l))
+        else:
+            du = float(us_l[-1] - us_l[-2])
+            ds = float(ss[-1] - ss[-2])
+            u = float(us_l[-1]) + (s_local - s_end) * (du / max(ds, 1e-16))
+        if not allow_overshoot:
+            u = min(u, float(us_l[-1]))
+        return u
 
     def _segCU(self, seg, u_local):
         """段局部 u∈[0,1] → 全局 u → 位置点。"""
         u_global = (float(seg.start_u)
                     + float(u_local) * (float(seg.end_u) - float(seg.start_u)))
         return np.asarray(self.CU(u_global))
+
+    def _segCU_os(self, seg, segLUT, u_local):
+        """段局部 u → 位置点；u 越过段末 1.0 时沿段末切线平滑外推。
+
+        与 single 模式 _CU_ext 同理：dwell 周期边界处波形几何可能不连续，
+        过冲帧不能直接调 CU 周期延拓（否则位置跳变/弦速失真），改沿本段
+        末切线外推（用段 LUT 最后两个节点近似切向）。u≤1 与 _segCU 一致。
+        """
+        u_local = float(u_local)
+        if u_local <= 1.0:
+            return self._segCU(seg, u_local)
+        us_l, _ = segLUT
+        u_a = float(us_l[-2])
+        u_b = float(us_l[-1])
+        tangent = ((self._segCU(seg, u_b) - self._segCU(seg, u_a))
+                   / max(u_b - u_a, 1e-16))
+        return self._segCU(seg, 1.0) + (u_local - 1.0) * tangent
 
     def _CU_ext(self, u):
         """路径求值：u 未过终点用波形 CU；u 越过终点沿终点切向延长。

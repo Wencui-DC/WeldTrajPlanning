@@ -516,42 +516,27 @@ class WaveBase:
     # ============================================================
     # 弧长 LUT：预计算 s(u) 查找表，用于弧长→参数的反向映射
     # ============================================================
-    def buildArcLengthLUT(self, n_samples=10000, seg_samples=2000):
-        """构建弧长 LUT：s(u) = 弦长折线累积 Σ|C(u_k) - C(u_{k-1})|。
-
-        用弦长而非精确弧长积分，使插补推进的弧长度量与
-        plotKinematics 的弦长反算一致，消除弓高导致的表观速度波动；
-        采样越密弦长近似越接近真实弧长。n_samples 默认 10000。
-
-        多段（存在弧长=0 的 dwell 停顿段）路径：不建贯穿全程的整体 LUT，
-        而是按 path.segments 逐段生成局部 LUT —— 每个移动段独立一个
-        u_local∈[0,1] 的弦长折线（seg_samples 默认 1000 点）；停顿段
-        （arc≈0，几何不动）不生成（segLUTs 中为 None）。这样插补时每段
-        就是一个"独立的单路段"，可复用单路段插补的推进口径，避免整体
-        LUT 跨段标尺/段界相位问题。
-        """
+    def buildArcLengthLUT(self, n_samples=10000, seg_samples=100):
         segments = self.path.segments
-        has_dwell = (len(segments) > 1
-                     and any(float(s.arc_length) <= 1e-12 for s in segments))
-
+        has_dwell = len(segments) > 1
         if has_dwell:
+            # 多段插补（sPlanner._interpSegments）只使用 segLUTs，
+            # 整体 LUT_u/LUT_s 保持 __init__ 的 None（仅 single 分支填充）。
             self.segLUTs = []
             for seg in segments:
                 if float(seg.arc_length) <= 1e-12:
                     self.segLUTs.append(None)
                     continue
+
                 u0 = float(seg.start_u)
                 u1 = float(seg.end_u)
                 span = u1 - u0
                 us_l = np.linspace(0.0, 1.0, int(seg_samples))
                 us_g = u0 + us_l * span
                 pts = np.asarray([self.CU(u) for u in us_g], dtype=float)
-                s = np.concatenate(
-                    ([0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))))
+                s = np.concatenate(([0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))))
                 self.segLUTs.append((us_l, s))
-            # 兼容占位：segments 插补不再使用整体 LUT_u/LUT_s
-            self.LUT_u = np.array([0.0, float(segments[-1].end_u)])
-            self.LUT_s = np.array([0.0, float(self.path.arcLen)])
+
             return self
 
         self.segLUTs = None
