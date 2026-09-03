@@ -228,7 +228,7 @@ class Vis(WaveBase):
         ax3d.set_zlim(mid_z - max_range, mid_z + max_range)
 
         # ---- 图2: 弧长 / 速度 / 加速度 ----
-        fig2, axes2 = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
+        _, axes2 = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
 
         # --- 子图1: 弧长 s(t) ---
         ax = axes2[0]

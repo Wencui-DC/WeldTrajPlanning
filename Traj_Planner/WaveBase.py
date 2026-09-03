@@ -7,9 +7,6 @@ from Pchip import Pchip
 from DataClass import *
 from Numeric import Numeric
 
-# 弧长 LUT 构建：固定阶高斯积分（解析导数 CU_der1，8 阶足够，微米级以下误差）
-_ARC_INT_ORDER = 12
-_ARC_GAUSS_XI, _ARC_GAUSS_WI = Numeric._leggauss_weight(_ARC_INT_ORDER)
 
 # ==============================
 # 基类：WaveBase (对应 handle)
@@ -516,7 +513,7 @@ class WaveBase:
     # ============================================================
     # 弧长 LUT：预计算 s(u) 查找表，用于弧长→参数的反向映射
     # ============================================================
-    def buildArcLengthLUT(self, n_samples=10000, seg_samples=100):
+    def buildArcLengthLUT(self, n_samples=10000, seg_samples=200):
         segments = self.path.segments
         has_dwell = len(segments) > 1
         if has_dwell:

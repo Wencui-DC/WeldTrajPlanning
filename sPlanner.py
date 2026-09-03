@@ -2,16 +2,16 @@ import numpy as np
 
 
 class sPlanner:
-    def __init__(self, dt):
+    def __init__(self, dt, vMax, aMax, jMax):
         self.arcLen = 0.0
         self.path = None
         self.veloPlans = []
         self.path_T_cum = np.array([])
         self.path_S_cum = np.array([])
         self.planCache = {}  # 段规划去重缓存：(弧长, 时长) -> sPlanner
-        self.vMax = 0.0   # 速度上限
-        self.aMax = 0.0   # 加速度上限
-        self.jMax = 0.0   # 固定跃度
+        self.vMax = vMax   # 速度上限
+        self.aMax = aMax   # 加速度上限
+        self.jMax = jMax  # 固定跃度
         self.T = 0.0      # 指定总时间，不可变
         self.vAvg = 0.0   # 指定平均速度，不可变
         self.len = 0.0    # 焊缝总长度
@@ -50,13 +50,12 @@ class sPlanner:
     # ================================================================
     # 主入口：固定总时间 T，速度/加速度在限幅内可调
     # ================================================================
-    def planFixedTime(self, arcLen: float, vMax: float, aMax: float, jMax: float, T: float):
+    def planFixedTime(self, arcLen: float, T: float):
         self.arcLen = arcLen
-        self.vMax = vMax  # 速度上限
-        self.aMax = aMax  # 加速度上限
-        self.jMax = jMax  # 固定跃度  
         self.T = T
-
+        vMax = self.vMax  # 速度上限
+        aMax = self.aMax  # 加速度上限
+        jMax = self.jMax  # 固定跃度  
         if arcLen <= 1e-12:
             self.v_used = 0.0
             self.a_used = 0.0
@@ -98,25 +97,20 @@ class sPlanner:
     # ================================================================
     # 主入口：规划已经由 WaveBase 展开的完整路径
     # ================================================================
-    def plan(self, path, vMax: float, aMax: float, jMax: float):
+    def plan(self, path):
         if not hasattr(path, "segments"):
             raise ValueError("path 必须包含 segment 对象")
 
         self.path = path
         self._segEndT = None   # 规划会改变段时间窗，清段时刻缓存
         self.planCache = {}    # 规划参数可能变化，段规划缓存不跨次复用
-        self.vMax = vMax
-        self.aMax = aMax
-        self.jMax = jMax
         self.vAvg = path.len / path.T if path.T > 0 else 0.0
         self.len = path.len
-
-        if len(path.segments) == 1 or all(segment.arc_length > 1e-12 for segment in path.segments):
+        if len(path.segments) == 1:
             return self._plan_single_path(path)
+        else:
+            return self._plan_multiple_path(path)
 
-        self._plan_multiple_path(path, vMax, aMax, jMax)
-        self._ok = True
-        return self
 
     def _plan_single_path(self, path):
         """Plan a complete path represented by one continuous segment.
@@ -127,13 +121,8 @@ class sPlanner:
         注意不能用 path_vPlans = [self]，否则 at_time() 会无限递归。
         """
         self._itpMode = "single"   # 单一路径：插补走 WaveBase0.getUByArc_Lut 弦长累加口径
-        segment_plan = sPlanner(self.dt)
-        segment_plan.planFixedTime(
-            path.arcLen,
-            self.vMax,
-            self.aMax,
-            self.jMax,
-            path.T)
+        segment_plan = sPlanner(self.dt, self.vMax, self.aMax, self.jMax)
+        segment_plan.planFixedTime(path.arcLen, path.T)
 
         self.veloPlans = [segment_plan]
         self.path_T_cum = np.array([segment_plan.T])
@@ -146,15 +135,17 @@ class sPlanner:
         self.a_used = segment_plan.a_used
         self.j_used = segment_plan.j_used
         self._ok = True
+
         return self
 
-    def _plan_multiple_path(self, path, vMax, aMax, jMax):
+
+    def _plan_multiple_path(self, path):
         """Plan the complete sequence of segments supplied by WaveBase."""
         self._itpMode = "multiple"   # dwell 多段：插补走时间窗门限口径
         self.veloPlans = []
         self.path_T_cum = np.array([])
         self.path_S_cum = np.array([])
-        self._plan_segments(path.segments, vMax, aMax, jMax)
+        self._plan_segments(path.segments)
 
         self.path_T_cum = np.cumsum([segment_plan.T for segment_plan in self.veloPlans])
         self.path_S_cum = np.concatenate((
@@ -168,8 +159,12 @@ class sPlanner:
         self.v_used = max((sp.v_used for sp in self.veloPlans), default=0.0)
         self.a_used = max((sp.a_used for sp in self.veloPlans), default=0.0)
         self.j_used = max((sp.j_used for sp in self.veloPlans), default=0.0)
+        self._ok = True
 
-    def _plan_segments(self, segments, vMax, aMax, jMax):
+        return self
+
+
+    def _plan_segments(self, segments):
         cache = self.planCache
         for segment in segments:
             arc_length = float(segment.arc_length)
@@ -180,10 +175,10 @@ class sPlanner:
             key = (round(arc_length, 6), round(duration, 9))
             segment_plan = cache.get(key)
             if segment_plan is None:
-                segment_plan = sPlanner(self.dt)
-                segment_plan.planFixedTime(
-                    arc_length, vMax, aMax, jMax, duration)
+                segment_plan = sPlanner(self.dt, self.vMax, self.aMax, self.jMax)
+                segment_plan.planFixedTime(arc_length, duration)
                 cache[key] = segment_plan
+
             self.veloPlans.append(segment_plan)
 
 
@@ -443,13 +438,6 @@ class sPlanner:
     # ================================================================
     def interpolate(self, wave, t):
         """沿路径推进一个插补步，返回位置点 posi = C(u)。
-
-        :param wave: 波形对象，须提供 LUT_u/LUT_s 弧长查找表与 CU 求值函数
-                     （如 Sine 实例）；多段（dwell 停顿）路径须提供
-                     segLUTs（逐段局部 LUT）。
-        :param t:  当前绝对时间（秒），用于段时间窗门限判定。
-        :return: 位置点 posi（3 元 ndarray）；同时更新 self.uLast /
-                 self.sLast / self.arcStep。速度取自已完成的规划 v_at(t)。
         """
         if not self._ok:
             raise RuntimeError("请先调用 plan()")
@@ -514,15 +502,7 @@ class sPlanner:
             self.sLast = float(self.path_S_cum[idx])
             return np.asarray(self.CU(float(seg.start_u)))
 
-        # 段末 u 过冲（实验）：每个移动段（arcLen>0，即"对于 arcLen≠0 的
-        # 插补"）段末都放开——减速段末尾的推进残差不再被钳死在 u=1.0，
-        # 而是沿段末切线平滑外推（像 single 模式老算法一样），让移动段
-        # 的几何弧长与规划时间同步耗尽，避免"停不到拐点、停顿开始时才
-        # 跳上拐点"。停顿段（arcLen=0）本身不推进，始终原地停在拐点。
-        # 观察点：若某移动段外推残差较大，其后的停顿段起点会停在拐点，
-        # 即段界出现一次由外推量决定的小回跳。
         allow_overshoot = float(seg.arc_length) > 1e-12
-
         if self.dt <= 1e-12:
             u_local = float(self.uLast)
         else:

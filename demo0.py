@@ -11,21 +11,20 @@ from sPlanner import *
 # 1. 构建轨迹
 # ==============================
 wavePara = WavePara()
-wavePara.T = 3
+wavePara.T = 2
 wavePara.len = 5
 wavePara.ampLeft = 5
 wavePara.ampRight = 5
 wavePara.tiltAngle = 0
-wavePara.dwell_left = 0.1
-wavePara.dwell_mid = 0.
-wavePara.dwell_right = 0.1
-wavePara.dwell_end = 0.
+wavePara.dwell_left = 0.5
+wavePara.dwell_mid = 0.1
+wavePara.dwell_right = 0.5
+wavePara.dwell_end = 0.1
 wavePara.isMovingWhenDwell = False
 
-numWave = 10.
-sine = Sine(wavePara, numWave)
+numWave = 100.5
+sine = Zig(wavePara, numWave)
 # sine.printPath()
-
 
 # cornerInfo = sine.findCorners()
 # sine.plotCorners(cornerInfo)
@@ -42,9 +41,9 @@ jMax = 50000
 # print(f"曲率限速：{vMax:.2f} mm/s")
 vMax = 50
 
-Ts = 0.004 #插补周期
-sVelo = sPlanner(Ts)
-sVelo.plan(sine.path, vMax, aMax, jMax)
+dt = 0.004 #插补周期
+sVelo = sPlanner(dt, vMax, aMax, jMax)
+sVelo.plan(sine.path)
 sVelo.printVeloPlans()  # 打印速度规划结果
 
 # print(sVelo.summary())
@@ -53,11 +52,10 @@ sVelo.printVeloPlans()  # 打印速度规划结果
 # # # 3. 逐周期插补
 # # # ==============================
 tracePoints = []
-simu_time = np.arange(0, sVelo.T, Ts)
+simu_time = np.arange(0, sVelo.T, dt)
 for t in simu_time:
     posi = sVelo.interpolate(sine, t)  # dt 缺省用构造时的 Ts
     x, y, z = posi[0], posi[1], posi[2]
-    # s = sVelo.sLast  # 每步真实弧长（弧长差分测速用）
     tracePoints.append((t, x, y, z))
 
 print(f"插补完成：共 {len(tracePoints)} 个周期\n")
@@ -68,4 +66,4 @@ print(f"插补完成：共 {len(tracePoints)} 个周期\n")
 t_arr = np.array([p[0] for p in tracePoints])
 v_plan = np.array([sVelo.v_at(t) for t in t_arr])
 s_plan = np.array([sVelo.s_at(t) for t in t_arr])
-sine.plotKinematics(tracePoints, Ts, s_plan, v_plan)
+sine.plotKinematics(tracePoints, dt, s_plan, v_plan)
