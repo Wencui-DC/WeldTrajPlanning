@@ -33,11 +33,12 @@ class WaveBase:
         self.itp_z = None
 
         # 弧长→参数 查找表（LUT）
-        self.LUT_u = None    # 等间距参数网格
-        self.LUT_s = None    # 对应累计弧长
-        # 多段（dwell 停顿）路径：逐段局部 LUT（段内 u_local∈[0,1] 的弦长折线，
-        # 或 None 表示停顿段不生成）；见 buildArcLengthLUT。
-        self.segLUTs = None
+        # 弧长查找表 LUTs：元素统一为 (u网格, 累计弧长 s) 二元组
+        #   - single（连续单段路径）：[(us, s)]，恰一项（全局 u）；
+        #   - multi（dwell 停顿路径）：逐段一项（段局部 u∈[0,1]），
+        #     停顿段（弧长=0）无几何，置 None 哨兵占位；
+        # 由 buildArcLengthLUT 构建，sPlanner 插补统一按 LUTs 读取。
+        self.LUTs = None
 
         # 尖角信息
         self.corners = None
@@ -512,33 +513,29 @@ class WaveBase:
 
     # ============================================================
     # 弧长 LUT：预计算 s(u) 查找表，用于弧长→参数的反向映射
+    #   self.LUTs 元素统一为 (u网格, 累计弧长 s)：
+    #     - single：[(us, s)] 恰一项，u 为全局参数；
+    #     - multi：逐段一项，u 为段局部 [0,1]，停顿段置 None。
     # ============================================================
-    def buildArcLengthLUT(self, n_samples=10000, seg_samples=200):
-        segments = self.path.segments
-        has_dwell = len(segments) > 1
-        if has_dwell:
-            # 多段插补（sPlanner._interpSegments）只使用 segLUTs，
-            # 整体 LUT_u/LUT_s 保持 __init__ 的 None（仅 single 分支填充）。
-            self.segLUTs = []
-            for seg in segments:
-                if float(seg.arc_length) <= 1e-12:
-                    self.segLUTs.append(None)
-                    continue
+    def buildArcLengthLUT(self):
+        """弧长 LUT 入口：按路径形态分发并返回 self。"""
+        if len(self.path.segments) > 1:
+            return self._buildForMultiPath()
+        else:
+            return self._buildForSinglePath()
 
-                u0 = float(seg.start_u)
-                u1 = float(seg.end_u)
-                span = u1 - u0
-                us_l = np.linspace(0.0, 1.0, int(seg_samples))
-                us_g = u0 + us_l * span
-                pts = np.asarray([self.CU(u) for u in us_g], dtype=float)
-                s = np.concatenate(([0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))))
-                self.segLUTs.append((us_l, s))
+    def _buildForSinglePath(self):
+        """single（连续单段）：整段一条 LUT（全局 u↔s 折线）。
 
-            return self
-
-        self.segLUTs = None
+        每正弦波均匀加密 per_wave 点，另并入段边界、整波节点与
+        TList 时刻折点，避免这些位置产生弦长插值误差。
+        """
         u_start = float(self.path.segments[0].start_u)
         u_end = float(self.path.segments[-1].end_u)
+
+        n_wave = max(1, int(np.ceil(u_end - u_start)))
+        per_wave = 400
+        n_samples = per_wave * n_wave
         us = np.linspace(u_start, u_end, n_samples)
 
         extra = [float(seg.end_u) for seg in self.path.segments[:-1]]
@@ -546,6 +543,7 @@ class WaveBase:
         for cycle in range(0, int(u_end) + 2):
             for t_knot in self.TList:
                 extra.append(float(cycle + float(t_knot) / self.para.T))
+
         extra = [x for x in extra if u_start + 1e-12 < x < u_end - 1e-12]
         if extra:
             us = np.unique(np.concatenate([us, np.asarray(extra, dtype=float)]))
@@ -555,9 +553,30 @@ class WaveBase:
         s = np.concatenate(
             ([0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))))
 
-        self.LUT_u = us
-        self.LUT_s = s
+        self.LUTs = [(us, s)]
         self.arcLen = float(s[-1])
+        return self
+
+    def _buildForMultiPath(self, seg_samples=200):
+        """multi（dwell 停顿）：LUTs 逐段一项（段局部 u∈[0,1]↔弧长）。
+
+        停顿段（弧长=0）无几何，置 None 哨兵占位。
+        """
+        self.LUTs = []
+        for seg in self.path.segments:
+            if float(seg.arc_length) <= 1e-12:
+                self.LUTs.append(None)
+                continue
+
+            u0 = float(seg.start_u)
+            u1 = float(seg.end_u)
+            span = u1 - u0
+            us_l = np.linspace(0.0, 1.0, int(seg_samples))
+            us_g = u0 + us_l * span
+            pts = np.asarray([self.CU(u) for u in us_g], dtype=float)
+            s = np.concatenate(([0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))))
+            self.LUTs.append((us_l, s))
+
         return self
 
 

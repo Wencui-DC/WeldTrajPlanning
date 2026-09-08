@@ -11,19 +11,19 @@ from sPlanner import *
 # 1. 构建轨迹
 # ==============================
 wavePara = WavePara()
-wavePara.T = 2
-wavePara.len = 5
-wavePara.ampLeft = 5
-wavePara.ampRight = 5
+wavePara.T = 1
+wavePara.len = 10
+wavePara.ampLeft = 3
+wavePara.ampRight = 3
 wavePara.tiltAngle = 0
-wavePara.dwell_left = 0.5
+wavePara.dwell_left = 0.1
 wavePara.dwell_mid = 0.1
-wavePara.dwell_right = 0.5
+wavePara.dwell_right = 0.1
 wavePara.dwell_end = 0.1
-wavePara.isMovingWhenDwell = False
+wavePara.isMovingWhenDwell = True
 
-numWave = 100.5
-sine = Zig(wavePara, numWave)
+numWave = 50
+sine = Sine(wavePara, numWave)
 # sine.printPath()
 
 # cornerInfo = sine.findCorners()
@@ -35,7 +35,7 @@ sine = Zig(wavePara, numWave)
 # ==============================
 # 2. 速度规划
 # ==============================
-aMax = 30000  # mm/s^2
+aMax = 10000  # mm/s^2
 jMax = 50000
 # sine.computeGlobalCurvSpeed(aMax)
 # print(f"曲率限速：{vMax:.2f} mm/s")

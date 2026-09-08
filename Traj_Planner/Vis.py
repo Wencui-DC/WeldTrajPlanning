@@ -187,13 +187,13 @@ class Vis(WaveBase):
 
 
     @staticmethod
-    def plotKinematics(tracePoints, Ts, sPlan = None, vPlan = None):
+    def plotKinematics(tracePoints, dt, sPlan = None, vPlan = None):
         # 根据插补点 tracePoints 画出相应的图
         # tracePoints: list of (t, x, y, z, ...)
         #   一律从实际插补点坐标反算里程/速度/加速度，不依赖插补器内部记录：
         #     里程 s = Σ|Δp|（弦长累积）
-        #     速度 v = |Δp| / Ts
-        #     加速度 a = Δv / Ts
+        #     速度 v = |Δp| / dt
+        #     加速度 a = Δv / dt
         t_arr = np.array([p[0] for p in tracePoints])
         x_arr = np.array([p[1] for p in tracePoints])
         y_arr = np.array([p[2] for p in tracePoints])
@@ -202,11 +202,11 @@ class Vis(WaveBase):
         # 从实际插补点反算（弦长近似）
         dp = np.diff(np.column_stack((x_arr, y_arr, z_arr)), axis=0)  # 相邻点位移 (n,3)
         ds_chord = np.linalg.norm(dp, axis=1)                         # 每步弦长
-        v_actual = np.insert(ds_chord / Ts, 0, 0.0)                   # 速度：首点补 0
+        v_actual = np.insert(ds_chord / dt, 0, 0.0)                   # 速度：首点补 0
         s_actual = np.insert(np.cumsum(ds_chord), 0, 0.0)             # 里程：从 0 累积
 
         # 加速度
-        a_mag = np.diff(v_actual) / Ts
+        a_mag = np.diff(v_actual) / dt
         a_mag = np.insert(a_mag, 0, 0)
         a_mag[-1] = 0
 

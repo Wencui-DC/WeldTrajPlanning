@@ -32,9 +32,10 @@ class sPlanner:
 
         # 插补器状态（interpolate 使用；LUT 由外部构建后传入）
         self.dt = dt                # 时间步长   
-        self.LUT_u = None           # 等间距参数网格
-        self.LUT_s = None           # 对应累计弧长
-        self.segLUTs = None         # 多段模式：逐段局部 LUT（见 WaveBase.buildArcLengthLUT）
+        # 统一弧长查找表：元素 (u网格, 累计弧长 s)——
+        #   single 模式恰一项（全局 u）；segments 模式逐段一项，
+        #   停顿段为 None。由 WaveBase.buildArcLengthLUT 构建。
+        self.LUTs = None
         self.uLast = 0.0            # 上一次的路径参数
                                     # （single=全局 u；segments=段局部 u∈[0,1]）
         self.sLast = 0.0            # 当前 TCP 弧长位置
@@ -449,16 +450,26 @@ class sPlanner:
 
         if self._itpMode == "multiple":
             # —— 多段：按 t 定位段 → 该段规划 → 段内 u∈[0,1] 单段插补 ——
-            return self._interpSegments(wave, t)
+            return self._interpMultiple(wave, t)
         else:
             # —— 单一路径（single）：原逻辑原样，不做任何改动 ——
-            u_arr, s_arr = self._unpackLUT(wave)
-            self.LUT_u = u_arr
-            self.LUT_s = s_arr
-            u = self.getUByArc_Lut(t)
-            return self._CU_ext(u)
+            return self._interpSingle(wave, t)            
 
-    def _interpSegments(self, wave, t):
+
+    def _interpSingle(self, wave, t):
+        # 单一路径插补：沿已规划路径推进
+
+        self.LUTs = wave.LUTs    # [(us, s)] 恰一项
+        if not self.LUTs:
+            raise ValueError(
+                "单段路径插补需要 wave.LUTs（[(us, s)] 一项），"
+                "请由 WaveBase.buildArcLengthLUT 构建")
+                
+        u = self.getUByArc_Lut(t)
+        return self._CU_ext(u)
+
+
+    def _interpMultiple(self, wave, t):
         """多段路径插补：每段各自当作一条"单路段"来走。
 
         1) 由 t 定位所属段 idx（沿用 _segmentEndTimes 的段时间窗）；
@@ -476,12 +487,12 @@ class sPlanner:
         if not segments:
             raise ValueError("多段路径为空：path.segments 为空")
 
-        segLUTs = getattr(wave, "segLUTs", None)
-        if segLUTs is None:
+        lut_list = getattr(wave, "LUTs", None)
+        if not lut_list:
             raise ValueError(
-                "多段路径插补需要 wave.segLUTs（逐段局部 LUT），"
+                "多段路径插补需要 wave.LUTs（逐段 (us, s) 或 None），"
                 "请由 WaveBase.buildArcLengthLUT 构建")
-        self.segLUTs = segLUTs
+        self.LUTs = lut_list
 
         t_now = float(t)
         ends = self._segmentEndTimes()
@@ -495,14 +506,16 @@ class sPlanner:
             self._segIdx = idx
             self.uLast = 0.0
 
-        segLUT = segLUTs[idx] if idx < len(segLUTs) else None
+        lut_list = self.LUTs if self.LUTs is not None else []
+        segLUT = lut_list[idx] if idx < len(lut_list) else None
         # 停顿段（弧长=0 / 无局部 LUT）：原地停在段起点，不推进
         if float(seg.arc_length) <= 1e-12 or segLUT is None:
             self.arcStep = 0.0
             self.sLast = float(self.path_S_cum[idx])
             return np.asarray(self.CU(float(seg.start_u)))
 
-        allow_overshoot = float(seg.arc_length) > 1e-12
+        # allow_overshoot = float(seg.arc_length) > 1e-12
+        allow_overshoot = False
         if self.dt <= 1e-12:
             u_local = float(self.uLast)
         else:
@@ -623,20 +636,15 @@ class sPlanner:
         _s2u_ext/_u2absS 的末端斜率外推自洽（|ΔC|≈Δs），弦长迭代可收敛。
         """
         u = float(u)
-        u_end = float(self.LUT_u[-1])
+        us, _ = self.LUTs[0]
+        u_end = float(us[-1])
         if u <= u_end:
             return np.asarray(self.CU(u))
-        du = float(self.LUT_u[-1] - self.LUT_u[-2])
+        du = float(us[-1] - us[-2])
         p_end = np.asarray(self.CU(u_end))
-        p_prev = np.asarray(self.CU(float(self.LUT_u[-2])))
+        p_prev = np.asarray(self.CU(float(us[-2])))
         tangent = (p_end - p_prev) / max(du, 1e-16)   # dC/du ≈ 终点切向量
         return p_end + (u - u_end) * tangent
-
-    @staticmethod
-    def _unpackLUT(wave):
-        """归一化波形对象为 (LUT_u, LUT_s) 两个 ndarray。"""
-        return (np.asarray(wave.LUT_u, dtype=float),
-                np.asarray(wave.LUT_s, dtype=float))
 
     def resetInterp(self):
         """复位插补状态：路径参数与弧长进度。"""
@@ -681,7 +689,8 @@ class sPlanner:
         **当前时间窗所属段**的末端——否则就等于提前进入下一段的几何，把其间
         的停顿整个跳过。这正是单纯按弦长推进在停顿路径上失效的原因。
         """
-        u_max = float(self.LUT_u[-1])
+        us, _ = self.LUTs[0]
+        u_max = float(us[-1])
         segment = self._segmentAt(t)
         if segment is None:
             return u_max
@@ -705,7 +714,8 @@ class sPlanner:
 
         t_now = float(t)
         u_start = float(self.uLast)
-        u_max = float(self.LUT_u[-1])
+        us, _ = self.LUTs[0]
+        u_max = float(us[-1])
 
         # 允许终点过冲的情形：
         #   - single 模式（单段连续路径，老算法行为）；
@@ -813,7 +823,8 @@ class sPlanner:
         idx = int(np.searchsorted(ends, t_now, side="right"))
         idx = min(idx, len(self.path.segments) - 1)
         seg = self.path.segments[idx]
-        segLUT = self.segLUTs[idx] if self.segLUTs is not None else None
+        lut_list = self.LUTs if self.LUTs is not None else []
+        segLUT = lut_list[idx] if idx < len(lut_list) else None
 
         u_lo = float(seg.start_u)
         u_hi = float(seg.end_u)
@@ -883,20 +894,23 @@ class sPlanner:
         return u_next
 
     def _s2u_lut(self, s_local):
-        """给定全局弧长 s_local (0 ~ LUT_s[-1])，反查全局参数 u。"""
-        if self.LUT_s is None or len(self.LUT_s) < 2:
+        """给定全局弧长 s_local (0 ~ LUTs[0].s[-1])，反查全局参数 u。"""
+        if not self.LUTs:
             return 0.0
-        s_local = max(0.0, min(float(s_local), float(self.LUT_s[-1])))
-        lo, hi = 0, len(self.LUT_s) - 1
+        us, ss = self.LUTs[0]
+        if len(ss) < 2:
+            return 0.0
+        s_local = max(0.0, min(float(s_local), float(ss[-1])))
+        lo, hi = 0, len(ss) - 1
         while hi - lo > 1:
             mid = (lo + hi) // 2
-            if self.LUT_s[mid] <= s_local:
+            if ss[mid] <= s_local:
                 lo = mid
             else:
                 hi = mid
-        frac = (s_local - self.LUT_s[lo]) / (self.LUT_s[hi] - self.LUT_s[lo] + 1e-16)
+        frac = (s_local - ss[lo]) / (ss[hi] - ss[lo] + 1e-16)
         frac = max(0.0, min(frac, 1.0))
-        return float(self.LUT_u[lo] + frac * (self.LUT_u[hi] - self.LUT_u[lo]))
+        return float(us[lo] + frac * (us[hi] - us[lo]))
 
     def _s2u_ext(self, s):
         """全局弧长→参数 u；s 越过终点 LUT_s[-1] 时按末端斜率线性外推。
@@ -904,13 +918,16 @@ class sPlanner:
         外推让 u 略超 LUT_u[-1]，配合波形对象的周期延拓求值 CU(u) 实现
         老算法的终点过冲（single 模式专用；multi 模式不调用本方法）。
         """
-        s_end = float(self.LUT_s[-1])
+        if not self.LUTs:
+            return 0.0
+        us, ss = self.LUTs[0]
+        s_end = float(ss[-1])
         if float(s) <= s_end:
             return self._s2u_lut(s)
-        du = float(self.LUT_u[-1] - self.LUT_u[-2])
-        ds = float(self.LUT_s[-1] - self.LUT_s[-2])
+        du = float(us[-1] - us[-2])
+        ds = float(ss[-1] - ss[-2])
         k = du / max(ds, 1e-16)
-        return float(self.LUT_u[-1] + (float(s) - s_end) * k)
+        return float(us[-1] + (float(s) - s_end) * k)
 
     def _u2absS(self, u):
         """Return the arc length at global path parameter u ∈ [0, waveNum].
@@ -918,29 +935,35 @@ class sPlanner:
         u 越过终点 LUT_u[-1] 时按末端斜率线性外推（single 模式过冲时
         sLast 与弧长进度保持一致）。
         """
-        u_end = float(self.LUT_u[-1])
+        if not self.LUTs:
+            return 0.0
+        us, ss = self.LUTs[0]
+        u_end = float(us[-1])
         if float(u) <= u_end:
             return self._u2s_lut(u)
-        du = float(self.LUT_u[-1] - self.LUT_u[-2])
-        ds = float(self.LUT_s[-1] - self.LUT_s[-2])
+        du = float(us[-1] - us[-2])
+        ds = float(ss[-1] - ss[-2])
         k = ds / max(du, 1e-16)
-        return float(self.LUT_s[-1] + (float(u) - u_end) * k)
+        return float(ss[-1] + (float(u) - u_end) * k)
 
     def _u2s_lut(self, u):
         """LUT 二分 + 线性插值查询 s(u)，u ∈ [0, waveNum]"""
-        if self.LUT_u is None or len(self.LUT_u) < 2:
+        if not self.LUTs:
             return 0.0
-        u = max(float(self.LUT_u[0]), min(float(u), float(self.LUT_u[-1])))
-        lo, hi = 0, len(self.LUT_u) - 1
+        us, ss = self.LUTs[0]
+        if len(us) < 2:
+            return 0.0
+        u = max(float(us[0]), min(float(u), float(us[-1])))
+        lo, hi = 0, len(us) - 1
         while hi - lo > 1:
             mid = (lo + hi) // 2
-            if self.LUT_u[mid] <= u:
+            if us[mid] <= u:
                 lo = mid
             else:
                 hi = mid
-        frac = (u - self.LUT_u[lo]) / (self.LUT_u[hi] - self.LUT_u[lo] + 1e-16)
+        frac = (u - us[lo]) / (us[hi] - us[lo] + 1e-16)
         frac = max(0.0, min(frac, 1.0))
-        return float(self.LUT_s[lo] + frac * (self.LUT_s[hi] - self.LUT_s[lo]))
+        return float(ss[lo] + frac * (ss[hi] - ss[lo]))
 
     # ================================================================
     # 画图
