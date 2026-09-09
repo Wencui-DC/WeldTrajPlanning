@@ -43,56 +43,12 @@ class sPlanner:
         self._segIdx = None         # 多段模式：当前所属段索引
         self._segEndT = None        # 各段结束时刻缓存
         self.CU = None              # 路径求值函数（interpolate 输出位置点用）
-        self._itpMode = None        # 'single'=单一路径(无门限) / 'segments'=dwell多段(时间窗门限)
+        self._itpMode = "single"    # 'single'=单一路径(无门限) / 'segments'=dwell多段(时间窗门限)
         self._tailFrames = 6.0      # 段末收尾窗口帧数（>0 启用：段结束前
                                     # 窗口内按 剩余弧长/剩余时间 等比预分配，
                                     # 消除段末 clamp 造成的空等/离散相位）
 
-    # ================================================================
-    # 主入口：固定总时间 T，速度/加速度在限幅内可调
-    # ================================================================
-    def planFixedTime(self, arcLen: float, T: float):
-        self.arcLen = arcLen
-        self.T = T
-        vMax = self.vMax  # 速度上限
-        aMax = self.aMax  # 加速度上限
-        jMax = self.jMax  # 固定跃度  
-        if arcLen <= 1e-12:
-            self.v_used = 0.0
-            self.a_used = 0.0
-            self.j_used = 0.0
-            self._build_segments()
-            self._ok = True
-            return self
 
-        self._itpMode = "single"   # 单一路径：插补走弦长累加、无时间窗门限
-
-        # -- 1) 用 aMax 求出可用的 v 范围 --
-        v_feas = self._v_feasible_max(aMax)
-        v_top = min(vMax, v_feas)
-        if v_top <= 0:
-            raise ValueError(f"弧长 {arcLen:.3f} 过短，无法完成加减速")
-
-        T_top, _ = self._profile_total_time(v_top, aMax)
-
-        # -- 2) 确定 v_used（a 固定为 aMax，v 二分下调拉长时间）--
-        self.a_used = aMax
-        self.j_used = jMax
-        if T_top <= T + 1e-9:
-            # T_top <= T: 全参数下完成太快 → 必须下调 v 来"拉长"时间
-            v_lo = arcLen / T * 0.1
-            self.v_used = self._bisect_v(v_lo, v_top, aMax, T_target=T)
-        else:
-            # T_top > T: 以最大可行速度 v_top 运行仍超过指定总时间 → 无解
-            raise ValueError(
-                f"不可行: 以 vMax/aMax 全参数运行仍超过指定总时间，"
-                f"最短需 {T_top:.4f}s > T={T:.4f}s"
-            )
-
-        # -- 3) 构建 7 段 --
-        self._build_segments()
-        self._ok = True
-        return self
 
     
     # ================================================================
@@ -183,6 +139,52 @@ class sPlanner:
             self.veloPlans.append(segment_plan)
 
 
+    # ================================================================
+    # 主入口：固定总时间 T，速度/加速度在限幅内可调
+    # ================================================================
+    def planFixedTime(self, arcLen: float, T: float):
+        self.arcLen = arcLen
+        self.T = T
+        vMax = self.vMax  # 速度上限
+        aMax = self.aMax  # 加速度上限
+        jMax = self.jMax  # 固定跃度  
+        if arcLen <= 1e-12:
+            self.v_used = 0.0
+            self.a_used = 0.0
+            self.j_used = 0.0
+            self._build_segments()
+            self._ok = True
+            return self
+
+        # -- 1) 用 aMax 求出可用的 v 范围 --
+        v_feas = self._v_feasible_max(aMax)
+        v_top = min(vMax, v_feas)
+        if v_top <= 0:
+            raise ValueError(f"弧长 {arcLen:.3f} 过短，无法完成加减速")
+
+        T_top, _ = self._profile_total_time(v_top, aMax)
+
+        # -- 2) 确定 v_used（a 固定为 aMax，v 二分下调拉长时间）--
+        self.a_used = aMax
+        self.j_used = jMax
+        if T_top <= T + 1e-9:
+            # T_top <= T: 全参数下完成太快 → 必须下调 v 来"拉长"时间
+            v_lo = arcLen / T * 0.1
+            self.v_used = self._bisect_v(v_lo, v_top, aMax, T_target=T)
+        else:
+            # T_top > T: 以最大可行速度 v_top 运行仍超过指定总时间 → 无解
+            raise ValueError(
+                f"不可行: 以 vMax/aMax 全参数运行仍超过指定总时间，"
+                f"最短需 {T_top:.4f}s > T={T:.4f}s"
+            )
+
+        # -- 3) 构建 7 段 --
+        self._build_segments()
+        self._ok = True
+
+        return self
+
+    
     # ================================================================
     # 内部：解析 (v, a) 对应的分段参数（唯一推导入口）
     # ================================================================
@@ -461,9 +463,7 @@ class sPlanner:
 
         self.LUTs = wave._LUTs    # [(us, s)] 恰一项
         if not self.LUTs:
-            raise ValueError(
-                "单段路径插补需要 wave._LUTs（[(us, s)] 一项），"
-                "请由 WaveBase.buildArcLengthLUT 构建")
+            raise ValueError("无LUTs，请由 WaveBase.buildArcLengthLUT 构建")
                 
         u = self.getUByArc_Lut(t)
         return self._CU_ext(u)

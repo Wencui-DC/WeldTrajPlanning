@@ -81,7 +81,6 @@ class AstPara:
     window: int = 0                 # 所需电流的时间窗，单侧
 
 
-
 @dataclass
 class AstWorkData:
     horizIBase: float = 0.0
