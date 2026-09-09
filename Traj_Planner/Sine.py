@@ -8,16 +8,17 @@ from DataClass import WavePara
 class Sine(Vis):
     def __init__(self, wavePara: WavePara, waveNum: float = 1.0):
         super().__init__(wavePara)
-        
+        self.para.waveNum = waveNum
         self.computeV()
         self.computeNewT()
         self.computeNewWL()
-        self.omega = 2 * np.pi / self.newT 
+        self.omega = 2 * np.pi / self._newT 
         self.computeCP()
         self.computeTtList() 
         self.initItp()
-        self.buildPathSegments(waveNum)
+        self.buildPathSegments()
         self.buildArcLengthLUT()
+        self.calcSingleArcLen()
 
     # ==============================
     # 计算所有关键点 CP
@@ -35,7 +36,7 @@ class Sine(Vis):
     # CP 子函数
     # ==============================
     def calcCP0(self):
-        t = self.newT
+        t = self._newT
         self.CP[0] = self.evalSine(t/4)
 
     def calcCP1(self):
@@ -45,7 +46,7 @@ class Sine(Vis):
         self.CP[1] = cp1
 
     def calcCP2(self):
-        t = self.newT
+        t = self._newT
         cp2 = self.evalSine(t/2)
         if self.para.dwell_left > 1e-6 and self.para.isMovingWhenDwell:
             cp2[0] += self.v * self.para.dwell_left
@@ -58,7 +59,7 @@ class Sine(Vis):
         self.CP[3] = cp3
 
     def calcCP4(self):
-        t = self.newT
+        t = self._newT
         cp4 = self.evalSine(t / 4 * 3)
         tempP = self.evalSine(t / 2)
         diff = cp4 - tempP
@@ -74,7 +75,7 @@ class Sine(Vis):
         self.CP[5] = cp5
 
     def calcCP6(self):
-        t = self.newT 
+        t = self._newT 
         cp6 = self.evalSine(t)
         tempP = self.evalSine(t / 4 * 3)
         diff = cp6 - tempP
@@ -94,7 +95,7 @@ class Sine(Vis):
     # 正弦波求值
     # ==============================
     def evalSine(self, t):
-        T = self.newT
+        T = self._newT
         t1 = np.mod(t, T)
         if 0 <= t1 < T / 2:
             return self.tiltedSine(self.para.ampLeft, t)

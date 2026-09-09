@@ -33,13 +33,14 @@ class Vis(WaveBase):
     def __init__(self, wavePara:WavePara):
         super().__init__(wavePara)
 
-    def plot(self, totalTime, openItp=False):
+    def plot(self, openItp=True):
+        totalTime = self.para.T * self.para.waveNum
         cp = np.vstack([[0,0,0], self.CP])
         x = cp[:, 0]
         y = cp[:, 1]
         z = cp[:, 2]
         
-        time = np.concatenate([[0], self.TList]) / self.para.T
+        time = np.concatenate([[0], self._TList]) / self.para.T
 
         tq = np.linspace(0, 1, 200)
 
@@ -98,8 +99,8 @@ class Vis(WaveBase):
         plt.figure(figsize=(8, 6))
         ax3 = plt.axes(projection='3d')
         t_full = np.linspace(0, totalTime, 2000)
-        nSeg = len(self.tList)          # 每个大周期内的子段数 (8)
-        normalized_TList = self.TList / self.para.T
+        nSeg = len(self._tList)          # 每个大周期内的子段数 (8)
+        normalized_TList = self._TList / self.para.T
         colors = plt.cm.tab10(np.linspace(0, 1, nSeg))  # 10色 colormap 取前 nSeg 色
 
         for i in range(nSeg):
@@ -144,7 +145,7 @@ class Vis(WaveBase):
     def plotCorners(self):
         """绘制拐点信息，将尖角位置叠加在PCHIP插补图上"""
 
-        cornerInfo = self.corners
+        cornerInfo = self.findCorners()
         cp = np.vstack([[0,0,0], self.CP])
         x = cp[:, 0]
         y = cp[:, 1]

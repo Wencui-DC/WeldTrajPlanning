@@ -8,14 +8,16 @@ from DataClass import *
 class Zig(Vis):
     def __init__(self, wavePara:WavePara, waveNum: float = 1.0):
         super().__init__(wavePara)
+        self.para.waveNum = waveNum
         self.computeV()
         self.computeNewT()
         self.computeNewWL()
         self.computeCP()
         self.computeTtList()
         self.initItp()
-        self.buildPathSegments(waveNum)
+        self.buildPathSegments()
         self.buildArcLengthLUT()
+        self.calcSingleArcLen()
 
 
 
@@ -33,7 +35,7 @@ class Zig(Vis):
     # --- 子函数 ---
     def calcCP0(self):
         k = self.para.ampLeft / (self.para.ampRight + self.para.ampLeft)
-        cp0_x = k * self.newWL * 0.5
+        cp0_x = k * self._newWL * 0.5
         if self.para.tiltAngle > 1e-6:
             cp0_x += np.tan(np.radians(self.para.tiltAngle)) * self.para.ampLeft
         self.CP[0] = np.array([cp0_x, self.para.ampLeft, 0.0])
@@ -56,7 +58,7 @@ class Zig(Vis):
     def calcCP5(self):
         cp6 = self.CP[6].copy()
         k = self.para.ampRight / (self.para.ampLeft + self.para.ampRight)
-        cp5_x = cp6[0] - self.newWL * k * 0.5
+        cp5_x = cp6[0] - self._newWL * k * 0.5
         if abs(self.para.tiltAngle) > 1e-6:
             cp5_x -= np.tan(np.radians(self.para.tiltAngle)) * self.para.ampRight
         self.CP[5] = np.array([cp5_x, -self.para.ampRight, 0.0])

@@ -12,6 +12,7 @@ class WavePara:
     dwell_right = 0.0
     dwell_end = 0.0
     isMovingWhenDwell = False
+    waveNum = 1.0              # 波型数量（摆动次数）
 
 @dataclass
 class WeldData:
@@ -101,8 +102,7 @@ class iTimeInterval:
 
 
 @dataclass
-class PathSegment:
-    """One time-ordered section in a wave period."""
+class Segment:
     index: int
     start: list = field(default_factory=list)
     end: list = field(default_factory=list)
@@ -113,7 +113,8 @@ class PathSegment:
 
 
 @dataclass
-class WavePath:
+class Path:
+    # Path 包含一个或多个 Segment
     segments: list = field(default_factory=list)
     T: float = 0.0  # 周期总时间
     len: float = 0.0  # 起点到终点的直线距离

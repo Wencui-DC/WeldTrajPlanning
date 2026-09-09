@@ -168,16 +168,16 @@ class sPlanner:
     def _plan_segments(self, segments):
         cache = self.planCache
         for segment in segments:
-            arc_length = float(segment.arc_length)
+            seg_arc_len = float(segment.seg_arc_len)
             duration = float(segment.duration)
             # 容差归一化：弧长是数值积分结果，几何等价的段在不同 u 位置积分
             # 出的弧长有 ~1e-9 mm 的浮点差异（与 u 位置无关），不放宽就会各自
             # 重算。量化到 1e-6 mm（纳米，远小于微米级加工精度）/ 1e-9 s。
-            key = (round(arc_length, 6), round(duration, 9))
+            key = (round(seg_arc_len, 6), round(duration, 9))
             segment_plan = cache.get(key)
             if segment_plan is None:
                 segment_plan = sPlanner(self.dt, self.vMax, self.aMax, self.jMax)
-                segment_plan.planFixedTime(arc_length, duration)
+                segment_plan.planFixedTime(seg_arc_len, duration)
                 cache[key] = segment_plan
 
             self.veloPlans.append(segment_plan)
@@ -459,10 +459,10 @@ class sPlanner:
     def _interpSingle(self, wave, t):
         # 单一路径插补：沿已规划路径推进
 
-        self.LUTs = wave.LUTs    # [(us, s)] 恰一项
+        self.LUTs = wave._LUTs    # [(us, s)] 恰一项
         if not self.LUTs:
             raise ValueError(
-                "单段路径插补需要 wave.LUTs（[(us, s)] 一项），"
+                "单段路径插补需要 wave._LUTs（[(us, s)] 一项），"
                 "请由 WaveBase.buildArcLengthLUT 构建")
                 
         u = self.getUByArc_Lut(t)
@@ -487,10 +487,10 @@ class sPlanner:
         if not segments:
             raise ValueError("多段路径为空：path.segments 为空")
 
-        lut_list = getattr(wave, "LUTs", None)
+        lut_list = getattr(wave, "_LUTs", None)
         if not lut_list:
             raise ValueError(
-                "多段路径插补需要 wave.LUTs（逐段 (us, s) 或 None），"
+                "多段路径插补需要 wave._LUTs（逐段 (us, s) 或 None），"
                 "请由 WaveBase.buildArcLengthLUT 构建")
         self.LUTs = lut_list
 
@@ -509,12 +509,12 @@ class sPlanner:
         lut_list = self.LUTs if self.LUTs is not None else []
         segLUT = lut_list[idx] if idx < len(lut_list) else None
         # 停顿段（弧长=0 / 无局部 LUT）：原地停在段起点，不推进
-        if float(seg.arc_length) <= 1e-12 or segLUT is None:
+        if float(seg.seg_arc_len) <= 1e-12 or segLUT is None:
             self.arcStep = 0.0
             self.sLast = float(self.path_S_cum[idx])
             return np.asarray(self.CU(float(seg.start_u)))
 
-        # allow_overshoot = float(seg.arc_length) > 1e-12
+        # allow_overshoot = float(seg.seg_arc_len) > 1e-12
         allow_overshoot = False
         if self.dt <= 1e-12:
             u_local = float(self.uLast)
@@ -729,7 +729,7 @@ class sPlanner:
             seg = self._segmentAt(t_now + dt)
             allow_overshoot = (
                 seg is not None
-                and float(getattr(seg, "arc_length", 0.0)) > 1e-9
+                and float(getattr(seg, "seg_arc_len", 0.0)) > 1e-9
                 and float(seg.end_u) >= u_max - 1e-9)
 
         if u_start >= u_max and not allow_overshoot:
@@ -744,7 +744,7 @@ class sPlanner:
 
         # —— 段起点对齐 + 段比例 α + 弦长/路段平均 vt 比对 ——
         # 目标折线弧长 = 本段折线起点 + (s_at(t+dt)-s_at(段起点))·α：
-        # 解析弧长增量按段长比例 α = LUT 折线段长/解析段长(arc_length) 折进
+        # 解析弧长增量按段长比例 α = LUT 折线段长/解析段长(seg_arc_len) 折进
         # 本段折线标尺（折线弦长比精确弧长积分短 ~0.01mm/段）。段末 t=段规划
         # 末时折线目标恰好到达几何端 end_u → 几何与时间同步耗尽。
         # 迭代目标取路段平均 (v_at(t)+v_at(t+dt))/2 而非端点瞬时：减速段端点
@@ -753,7 +753,7 @@ class sPlanner:
         # （single 分支巡航为主、瞬时与平均等价，保持瞬时不变。）
         seg_now = self._segmentAt(t_now)
         if (seg_now is None
-                or float(getattr(seg_now, "arc_length", 0.0)) <= 1e-9):
+                or float(getattr(seg_now, "seg_arc_len", 0.0)) <= 1e-9):
             return u_start
         u_geom_end = float(min(seg_now.end_u, u_max))
         if u_geom_end <= u_start + 1e-12:
@@ -772,7 +772,7 @@ class sPlanner:
 
         s_lut_seg0 = float(self._u2s_lut(float(seg_now.start_u)))
         lut_len = float(self._u2s_lut(float(seg_now.end_u))) - s_lut_seg0
-        plan_len = max(float(seg_now.arc_length), lut_len, 1e-12)
+        plan_len = max(float(seg_now.seg_arc_len), lut_len, 1e-12)
         alpha = lut_len / plan_len
         s_lut_tgt = s_lut_seg0 + (float(self.s_at(t_now + dt))
                                   - float(self.s_at(seg_start_t))) * alpha
@@ -802,7 +802,7 @@ class sPlanner:
 
         每个移动段视为一个独立的"单路段"：段内弧长标尺取自该段的局部
         LUT（u_local∈[0,1] 的弦长折线，端长拉伸标定到段解析弧长
-        arc_length）。每帧推进量 = 规划弧长差分 ds = s_at(t+dt)-s_at(t)
+        seg_arc_len）。每帧推进量 = 规划弧长差分 ds = s_at(t+dt)-s_at(t)
         —— 即该路段平均弧长（"速度与规划一致"的正确路段平均口径），
         反查得段内 u_local 再映射回全局 u。
 
@@ -811,7 +811,7 @@ class sPlanner:
 
         端长标定：局部 LUT 折线端比解析弧长短 δ≈6~8.5um/段（1000 点弦
         折线的弓差）。若直接用折线端判段末，几何端会提前 δ 到达 → 段末
-        空等帧（dev 88/100%）。故按 ratio = arc_length/折线端把推进弧长
+        空等帧（dev 88/100%）。故按 ratio = seg_arc_len/折线端把推进弧长
         统一到解析标尺：段末解析差分 ds→0 与 v→0 同刻，几何端即停，
         无提前、无空等、无段界相位帧。
         """
@@ -830,7 +830,7 @@ class sPlanner:
         u_hi = float(seg.end_u)
 
         # —— 停顿段（arc=0）：不推进，原地停 ——
-        if float(seg.arc_length) <= 1e-12 or segLUT is None:
+        if float(seg.seg_arc_len) <= 1e-12 or segLUT is None:
             return float(min(max(self.uLast, u_lo), u_hi))
 
         # —— 移动段：段内弧长推进 ——
@@ -843,7 +843,7 @@ class sPlanner:
             return u_cl
 
         us_l, ss_raw = segLUT
-        arc = float(seg.arc_length)
+        arc = float(seg.seg_arc_len)
         ratio = arc / float(ss_raw[-1])     # 端长标定：拉伸折线到解析弧长
         u_span = u_hi - u_lo
         u_loc0 = (u_cl - u_lo) / u_span     # 段内当前参数 ∈[0,1)

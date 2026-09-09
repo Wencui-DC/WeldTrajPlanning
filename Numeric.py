@@ -15,7 +15,7 @@ class Numeric:
 
 
     @staticmethod
-    def calcArcLen(func, u_start: float, u_end: float, n_order: int, diff_h: float = 1e-6) -> float:
+    def _calcArcLen(func, u_start: float, u_end: float, n_order: int, diff_h: float = 1e-6) -> float:
         """
         拓展：三维参数曲线弧长 f(u) -> (x, y, z)
         """
@@ -60,11 +60,11 @@ class Numeric:
         # 第一轮计算
         init_order = 8
         order = init_order
-        len_prev = Numeric.calcArcLen(func, u_start, u_end, order)
+        len_prev = Numeric._calcArcLen(func, u_start, u_end, order)
         while order < max_order:
             # 阶数翻倍提升精度
             order *= 2
-            len_curr = Numeric.calcArcLen(func, u_start, u_end, order)
+            len_curr = Numeric._calcArcLen(func, u_start, u_end, order)
 
             # 计算相对误差
             abs_err = abs(len_curr - len_prev)
