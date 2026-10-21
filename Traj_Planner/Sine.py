@@ -8,17 +8,11 @@ from DataClass import WavePara
 class Sine(Vis):
     def __init__(self, wavePara: WavePara, waveNum: float = 1.0):
         super().__init__(wavePara)
-        self.para.waveNum = waveNum
-        self.computeV()
-        self.computeNewT()
-        self.computeNewWL()
-        self.omega = 2 * np.pi / self._newT 
-        self.computeCP()
-        self.computeTtList() 
-        self.initItp()
-        self.buildPathSegments()
-        self.buildArcLengthLUT()
-        self.calcSingleArcLen()
+        self.rebuild(waveNum=waveNum)
+
+    def _rebuildGeometry(self):
+        self.omega = 2 * np.pi / self._newT
+        return super()._rebuildGeometry()
 
     # ==============================
     # 计算所有关键点 CP

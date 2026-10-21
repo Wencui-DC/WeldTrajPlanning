@@ -26,8 +26,7 @@ numWave = 4
 # print(f"二者绝对误差: {abs(zig.arcLen * numWave - L_ref):.2e}")
 
 # 绘图（openItp=True 打开Pchip）
-# totalTime = numWave * 1
-# zig.plot(totalTime, openItp=True)
+zig.plot(openItp=True)
 
 # 计算曲率限速
 aMax = 10000 # mm/s^2
@@ -36,6 +35,6 @@ print(f"最大限速：{maxSpeed:.2f} mm/s")
 
 cornerInfo = zig.findCorners()
 print(cornerInfo)
-zig.plotCorners()
+# zig.plotCorners()
 
 

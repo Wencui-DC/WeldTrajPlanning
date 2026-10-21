@@ -893,6 +893,23 @@ class sPlanner:
         self.uLast = u_next
         return u_next
 
+    def _s2u_ext(self, s):
+        """全局弧长→参数 u；s 越过终点 LUT_s[-1] 时按末端斜率线性外推。
+
+        外推让 u 略超 LUT_u[-1]，配合波形对象的周期延拓求值 CU(u) 实现
+        老算法的终点过冲（single 模式专用；multi 模式不调用本方法）。
+        """
+        if not self.LUTs:
+            return 0.0
+        us, ss = self.LUTs[0]
+        s_end = float(ss[-1])
+        if float(s) <= s_end:
+            return self._s2u_lut(s)
+        du = float(us[-1] - us[-2])
+        ds = float(ss[-1] - ss[-2])
+        k = du / max(ds, 1e-16)
+        return float(us[-1] + (float(s) - s_end) * k)
+    
     def _s2u_lut(self, s_local):
         """给定全局弧长 s_local (0 ~ LUTs[0].s[-1])，反查全局参数 u。"""
         if not self.LUTs:
@@ -911,23 +928,6 @@ class sPlanner:
         frac = (s_local - ss[lo]) / (ss[hi] - ss[lo] + 1e-16)
         frac = max(0.0, min(frac, 1.0))
         return float(us[lo] + frac * (us[hi] - us[lo]))
-
-    def _s2u_ext(self, s):
-        """全局弧长→参数 u；s 越过终点 LUT_s[-1] 时按末端斜率线性外推。
-
-        外推让 u 略超 LUT_u[-1]，配合波形对象的周期延拓求值 CU(u) 实现
-        老算法的终点过冲（single 模式专用；multi 模式不调用本方法）。
-        """
-        if not self.LUTs:
-            return 0.0
-        us, ss = self.LUTs[0]
-        s_end = float(ss[-1])
-        if float(s) <= s_end:
-            return self._s2u_lut(s)
-        du = float(us[-1] - us[-2])
-        ds = float(ss[-1] - ss[-2])
-        k = du / max(ds, 1e-16)
-        return float(us[-1] + (float(s) - s_end) * k)
 
     def _u2absS(self, u):
         """Return the arc length at global path parameter u ∈ [0, waveNum].

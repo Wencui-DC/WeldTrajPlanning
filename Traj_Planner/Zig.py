@@ -8,16 +8,7 @@ from DataClass import *
 class Zig(Vis):
     def __init__(self, wavePara:WavePara, waveNum: float = 1.0):
         super().__init__(wavePara)
-        self.para.waveNum = waveNum
-        self.computeV()
-        self.computeNewT()
-        self.computeNewWL()
-        self.computeCP()
-        self.computeTtList()
-        self.initItp()
-        self.buildPathSegments()
-        self.buildArcLengthLUT()
-        self.calcSingleArcLen()
+        self.rebuild(waveNum=waveNum)
 
 
 

@@ -96,6 +96,34 @@ class WaveBase:
         for i in range(1, L):
             self._TList[i] = self._TList[i-1] + tList[i]
 
+    def rebuild(self, waveNum=None, waveLen=None):
+        """按新的波数 / 波长重建波型：v、净周期、净波长以及子类几何全部重算。
+
+        waveNum : float or None
+            新波数（整数或 .5），None 表示不变。
+        waveLen : float or None
+            新波长 (mm)，None 表示不变。
+        """
+        if waveLen is not None:
+            self.para.len = float(waveLen)
+        if waveNum is not None:
+            self.para.waveNum = float(waveNum)
+        self.computeV()
+        self.computeNewT()
+        self.computeNewWL()
+        self._rebuildGeometry()
+        return self
+
+    def _rebuildGeometry(self):
+        """子类几何重建：控制点 → 时间表 → 插补器 → 路径段 → 弧长 LUT。"""
+        self.computeCP()
+        self.computeTtList()
+        self.initItp()
+        self.buildPathSegments()
+        self.buildArcLengthLUT()
+        self.calcSingleArcLen()
+        return self
+
     def calcSingleArcLen(self):
         # single（连续单段）路径
         self.singleArcLen = self.path.arcLen / self.para.waveNum

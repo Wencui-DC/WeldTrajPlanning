@@ -20,9 +20,9 @@ wavePara.dwell_left = 0.1
 wavePara.dwell_mid = 0.1
 wavePara.dwell_right = 0.1
 wavePara.dwell_end = 0.1
-wavePara.isMovingWhenDwell = True
+wavePara.isMovingWhenDwell = False
 
-numWave = 20.5
+numWave = 4.5
 trajectory = Zig(wavePara, numWave)
 trajectory.printPath()
 

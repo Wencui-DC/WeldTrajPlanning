@@ -188,7 +188,7 @@ class Vis(WaveBase):
 
 
     @staticmethod
-    def plotKinematics(tracePoints, dt, sPlan = None, vPlan = None):
+    def plotKinematics(tracePoints, dt, sPlan = None, vPlan = None, plotTraj = True):
         # 根据插补点 tracePoints 画出相应的图
         # tracePoints: list of (t, x, y, z, ...)
         #   一律从实际插补点坐标反算里程/速度/加速度，不依赖插补器内部记录：
@@ -211,22 +211,23 @@ class Vis(WaveBase):
         a_mag = np.insert(a_mag, 0, 0)
         a_mag[-1] = 0
 
-        # ---- 图1: 3D 插补轨迹 ----
-        fig1 = plt.figure(figsize=(10, 7))
-        ax3d = fig1.add_subplot(projection='3d')
-        ax3d.plot(x_arr, y_arr, z_arr, 'b.', ms=1.5, label='插补点')
-        ax3d.scatter(x_arr[0], y_arr[0], z_arr[0], c='g', s=60, label='起点')
-        ax3d.scatter(x_arr[-1], y_arr[-1], z_arr[-1], c='r', s=60, label='终点')
-        ax3d.set_xlabel('X (mm)')
-        ax3d.set_ylabel('Y (mm)')
-        ax3d.set_zlabel('Z (mm)')
-        ax3d.set_title(f'插补轨迹图')
-        ax3d.legend()
-        max_range = max(np.ptp(x_arr), np.ptp(y_arr), np.ptp(z_arr)) / 2
-        mid_x, mid_y, mid_z = x_arr.mean(), y_arr.mean(), z_arr.mean()
-        ax3d.set_xlim(mid_x - max_range, mid_x + max_range)
-        ax3d.set_ylim(mid_y - max_range, mid_y + max_range)
-        ax3d.set_zlim(mid_z - max_range, mid_z + max_range)
+        # ---- 图1: 3D 插补轨迹（plotTraj=False 时不画） ----
+        if plotTraj:
+            fig1 = plt.figure(figsize=(10, 7))
+            ax3d = fig1.add_subplot(projection='3d')
+            ax3d.plot(x_arr, y_arr, z_arr, 'b.', ms=1.5, label='插补点')
+            ax3d.scatter(x_arr[0], y_arr[0], z_arr[0], c='g', s=60, label='起点')
+            ax3d.scatter(x_arr[-1], y_arr[-1], z_arr[-1], c='r', s=60, label='终点')
+            ax3d.set_xlabel('X (mm)')
+            ax3d.set_ylabel('Y (mm)')
+            ax3d.set_zlabel('Z (mm)')
+            ax3d.set_title(f'插补轨迹图')
+            ax3d.legend()
+            max_range = max(np.ptp(x_arr), np.ptp(y_arr), np.ptp(z_arr)) / 2
+            mid_x, mid_y, mid_z = x_arr.mean(), y_arr.mean(), z_arr.mean()
+            ax3d.set_xlim(mid_x - max_range, mid_x + max_range)
+            ax3d.set_ylim(mid_y - max_range, mid_y + max_range)
+            ax3d.set_zlim(mid_z - max_range, mid_z + max_range)
 
         # ---- 图2: 弧长 / 速度 / 加速度 ----
         _, axes2 = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
